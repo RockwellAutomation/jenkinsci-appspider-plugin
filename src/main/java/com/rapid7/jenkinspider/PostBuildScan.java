@@ -3,20 +3,19 @@ package com.rapid7.jenkinspider;
 import hudson.Extension;
 import hudson.FilePath;
 import hudson.Launcher;
-import hudson.model.AbstractBuild;
-import hudson.model.AbstractProject;
-import hudson.model.BuildListener;
-import hudson.model.Descriptor;
+import hudson.model.*;
 import hudson.tasks.BuildStepMonitor;
 import hudson.tasks.Publisher;
 import hudson.util.FormValidation;
 import hudson.util.ListBoxModel;
+import jenkins.tasks.SimpleBuildStep;
 import org.apache.commons.validator.UrlValidator;
 import org.json.JSONObject;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
 
+import javax.annotation.Nonnull;
 import javax.servlet.ServletException;
 import java.io.*;
 import java.net.MalformedURLException;
@@ -33,7 +32,7 @@ import static java.lang.Thread.sleep;
 /**
  * Created by nbugash on 20/07/15.
  */
-public class PostBuildScan extends Publisher {
+public class PostBuildScan extends Publisher implements SimpleBuildStep {
 
     private final int SLEEPTIME = 90; //seconds
     private final String SUCCESSFUL_SCAN = "Completed|Stopped";
@@ -253,6 +252,126 @@ public class PostBuildScan extends Publisher {
     @Override
     public DescriptorImp getDescriptor() {
         return (DescriptorImp) super.getDescriptor();
+    }
+
+    @Override
+    public void perform(@Nonnull Run<?, ?> run, @Nonnull FilePath filePath, @Nonnull Launcher launcher, @Nonnull TaskListener listener) throws InterruptedException, IOException {
+        PrintStream log = listener.getLogger();
+        String appSpiderEntUrl = getDescriptor().getAppSpiderEntUrl();
+        String appSpiderEntApiKey = null;
+        String appSpiderUsername = getDescriptor().getAppSpiderUsername();
+        String appSpiderPassword = getDescriptor().getAppSpiderPassword();
+
+        log.println("Value of AppSpider Enterprise Server Url: " + appSpiderEntUrl);
+        log.println("Value of AppSpider Username: " + appSpiderUsername);
+        log.println("Value of Scan Configuration name: " + configName);
+        log.println("Value of Scan Filename: " + reportName);
+
+        // Don't perform a scan
+        if (!enableScan) {
+            log.println("Scan is not enabled. Continuing the build without scanning.");
+            return;
+        }
+
+        /*
+         * Check if we need an authentication token
+         * */
+        if (appSpiderEntApiKey == null || appSpiderEntApiKey.isEmpty()) {
+            //   We need to get the authToken
+            appSpiderEntApiKey = Authentication.authenticate(appSpiderEntUrl, appSpiderUsername, appSpiderPassword);
+        }
+
+        if (isANewScanConfig()) {
+            log.println("Value of Scan Config Name: " + scanConfigName);
+            log.println("Value of Scan Config URL: " + scanConfigUrl);
+            log.println("Value of Scan Config Engine Group name: " + scanConfigEngineGroupName);
+
+            /* Need to indicate to the user that we are going to overwrite the existing scan config */
+
+            /* Create a new scan config */
+            String engineGroupId = ScanEngineGroup.getEngineGroupIdFromName(appSpiderEntUrl, appSpiderEntApiKey, scanConfigEngineGroupName);
+            ScanConfiguration.saveConfig(appSpiderEntUrl, appSpiderEntApiKey, scanConfigName, scanConfigUrl, engineGroupId);
+            log.println("Successfully created the scan config " + scanConfigName);
+
+            // Set the configName to the new created scan config
+            configName = scanConfigName;
+            log.println("New value of Scan Configuration name: " + configName);
+
+            /* Reset scanConfigName and scanConfigUrl */
+            scanConfigName = null;
+            scanConfigUrl = null;
+        }
+
+        /*
+         * (1) Execute the scan
+         * (2) Obtain the response from the NTOEnterprise Server
+         * */
+        JSONObject scanResponse = ScanManagement.runScanByConfigName(appSpiderEntUrl, appSpiderEntApiKey, configName);
+
+        /*
+         * Check if a malformed response was received from the server
+         * */
+        if (scanResponse.equals(null)) {
+            log.println("Error: Check the JSON response from the NTOEnterprise Server");
+            return;
+        }
+
+        /*
+         * Response received. Check if the request was successful.
+         * */
+        if (!scanResponse.getBoolean("IsSuccess")) {
+            log.println("Error: Response from " + appSpiderEntUrl + " came back not successful");
+            return;
+        }
+
+        /*
+         * If user opted out from the monitoring the scan, continue with the build process
+         * */
+        if (!generateReport) {
+            log.println("Continuing the build without generating the report.");
+            return;
+        }
+
+        /* In a regular interval perform a check if the scan is done */
+        String scanId = scanResponse.getJSONObject("Scan").getString("Id");
+        String scan_status = ScanManagement.getScanStatus(appSpiderEntUrl,appSpiderEntApiKey,scanId);
+        while(!scan_status.matches(FINISHED_SCANNING)) {
+            log.println("Waiting for scan to finish");
+            try {
+                TimeUnit.SECONDS.sleep(SLEEPTIME);
+                appSpiderEntApiKey = Authentication.authenticate(appSpiderEntUrl, appSpiderUsername, appSpiderPassword);
+                scan_status = ScanManagement.getScanStatus(appSpiderEntUrl, appSpiderEntApiKey, scanId);
+                log.println("Scan status: [" + scan_status +"]");
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+
+        /* Scan finished */
+        if (!ScanManagement.hasReport(appSpiderEntUrl, appSpiderEntApiKey, scanId)) {
+            log.println("No reports for this scan: " + scanId);
+        }
+
+        log.println("Finished scanning!");
+
+        if (!(ScanManagement.getScanStatus(appSpiderEntUrl, appSpiderEntApiKey, scanId))
+                .matches(SUCCESSFUL_SCAN)) {
+            log.println("Scan was complete but was not successful. Status was '" +
+                    ScanManagement.getScanStatus(appSpiderEntUrl, appSpiderEntApiKey, scanId) +
+                    "'");
+            return;
+        }
+
+        /* Scan completed with either a 'Complete' or 'Stopped' status */
+        log.println("Generating xml report to:" + filePath.getBaseName());
+        String xmlFile = ReportManagement.getVulnerabilitiesSummaryXml(appSpiderEntUrl, appSpiderEntApiKey, scanId);
+
+        /* Saving the Report*/
+        SaveToFile(filePath.getParent() + "/" + filePath.getBaseName() + "/" + reportName + "_" +
+                new SimpleDateFormat("yyyy.MM.dd_HH.mm.ss").format(new Date()) + ".xml", xmlFile);
+        log.println("Generating report done.");
+
+        return;
     }
 
 
