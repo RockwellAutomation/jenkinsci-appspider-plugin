@@ -32,7 +32,7 @@ Things that are needed:
     
 2. Change directory to the jenkinspider repository
     ```sh
-    $ cd jenkinspider
+    $ cd jenkinsci-appspider-plugin
     ```
     
 3. Build the hpi file. For first time build run: 
