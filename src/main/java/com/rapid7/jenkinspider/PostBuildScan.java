@@ -364,13 +364,13 @@ public class PostBuildScan extends Publisher implements SimpleBuildStep {
 
         /* Scan completed with either a 'Complete' or 'Stopped' status */
         log.println("Generating xml report to:" + filePath.getBaseName());
-        log.println("Generating :" + filePath.getParent() + "/" + filePath.getBaseName() + "/" + reportName + "_" +
+        log.println("Generating :" + filePath.getParent() + File.separator + filePath.getBaseName() + File.separator + reportName + "_" +
                 new SimpleDateFormat("yyyy.MM.dd_HH.mm.ss").format(new Date()) + ".xml");
         String xmlFile = ReportManagement.getVulnerabilitiesSummaryXml(appSpiderEntUrl, appSpiderEntApiKey, scanId);
         log.println("Report :" + xmlFile);
 
         /* Saving the Report*/
-        SaveToFile(filePath.getParent() + "/" + filePath.getBaseName() + "/" + reportName + "_" +
+        SaveToFile(filePath.getParent() + File.separator + filePath.getBaseName() + File.separator + reportName + "_" +
                 new SimpleDateFormat("yyyy.MM.dd_HH.mm.ss").format(new Date()) + ".xml", xmlFile);
         log.println("Generating report done.");
 
