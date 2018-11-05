@@ -27,7 +27,7 @@ Things that are needed:
 ### How to build the hpi file
 1. Clone the git repository
     ```sh
-    $ git clone https://github.com/rapid7/jenkinspider.git
+    $ git clone https://github.com/RockwellAutomation/jenkinsci-appspider-plugin.git
     ```
     
 2. Change directory to the jenkinspider repository
